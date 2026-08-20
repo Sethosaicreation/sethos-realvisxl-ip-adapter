@@ -229,7 +229,10 @@ class RealVisEngine:
                     local_files_only=True,
                 )
                 pipeline.to("cuda")
-                pipeline.enable_vae_slicing()
+                if hasattr(pipeline, "enable_vae_slicing"):
+                    pipeline.enable_vae_slicing()
+                elif hasattr(pipeline.vae, "enable_slicing"):
+                    pipeline.vae.enable_slicing()
                 pipeline.set_progress_bar_config(disable=True)
                 self._pipeline = pipeline
                 return pipeline
