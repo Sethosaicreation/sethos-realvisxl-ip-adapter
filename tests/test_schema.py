@@ -22,6 +22,7 @@ def valid_input() -> dict:
             "negative_prompt": "watermark",
             "edit_mode": "free",
             "fidelity": "identity",
+            "prompt_adherence": "strict",
             "aspect_ratio": "3:4",
             "quality": "standard",
             "content_rating": "standard",
@@ -37,6 +38,13 @@ class SchemaTests(unittest.TestCase):
         request = parse_request(valid_input())
         self.assertEqual(request.steps, 30)
         self.assertEqual(request.prompt_template, "full_body")
+        self.assertEqual(request.prompt_adherence, "strict")
+
+    def test_rejects_unknown_prompt_adherence(self) -> None:
+        event = valid_input()
+        event["input"]["prompt_adherence"] = "absolute"
+        with self.assertRaises(InputError):
+            parse_request(event)
 
     def test_adult_requires_confirmation(self) -> None:
         event = valid_input()

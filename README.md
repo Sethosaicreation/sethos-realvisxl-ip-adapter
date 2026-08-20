@@ -7,10 +7,13 @@ Second moteur de **Administration > Outils créatifs > Créateur photo**.
 - Contrat : `sethos.realvisxl.ip-adapter.v1`
 - Première référence : identité faciale, avec recadrage automatique du visage
 - Seconde référence facultative : corps, pose, style ou décor
+- Réglage `prompt_adherence` : `strict` (texte prioritaire), `balanced` ou `reference`
 - Sortie : WebP encodé en base64 puis copié dans le stockage privé Sethos
 - Sécurité : validation 18+, refus des termes liés aux mineurs et confirmation du consentement en amont
 
 Ce moteur reconstruit une nouvelle photographie guidée par les références. Il est volontairement complémentaire de Qwen Image Edit, qui reste plus adapté aux retouches locales conservant exactement la composition d’origine.
+
+Le mode `strict`, sélectionné par défaut, envoie l’instruction utilisateur aux deux encodeurs SDXL, renforce le guidage textuel et limite l’influence de la référence hors visage. Le niveau de préservation `identity` utilise parallèlement un recadrage facial serré afin de réduire la dérive des traits.
 
 ## Endpoint RunPod
 

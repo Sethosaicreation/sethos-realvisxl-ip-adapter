@@ -39,7 +39,8 @@ def handler(event: Any) -> dict[str, Any]:
             "contract_version": CONTRACT_VERSION,
             "prompt_sha256": prompt_hash,
             "applied_parameters": request.public_parameters(
-                metadata["seed"], metadata["width"], metadata["height"], metadata["face_scale"], metadata["reference_scale"]
+                metadata["seed"], metadata["width"], metadata["height"], metadata["face_scale"],
+                metadata["reference_scale"], metadata["guidance_scale"]
             ),
             "image_base64": encoded,
             "mime_type": "image/webp",

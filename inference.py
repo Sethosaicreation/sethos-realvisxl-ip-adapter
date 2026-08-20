@@ -27,7 +27,13 @@ REFERENCE_WEIGHT = "ip-adapter-plus_sdxl_vit-h.safetensors"
 BASE_NEGATIVE = (
     "lowres, low quality, worst quality, blurry, jpeg artifacts, text, watermark, logo, "
     "deformed anatomy, disfigured, extra limbs, missing limbs, fused fingers, extra fingers, "
-    "bad hands, malformed feet, asymmetrical eyes, duplicate person, plastic skin"
+    "bad hands, malformed feet, duplicate person, plastic skin, face asymmetry, eyes asymmetry, "
+    "deformed eyes, deformed mouth, distorted face, altered facial structure, different person"
+)
+FULL_NUDITY_TERMS = re.compile(
+    r"\b(?:fully\s+nude|full\s+nudity|completely\s+naked|completly\s+naked|nude|nudity|naked|"
+    r"unclothed|entirely\s+unclothed|nu(?:e|es|s)?|nudité)\b",
+    re.IGNORECASE,
 )
 TEMPLATE_PROMPTS = {
     "full_body": "full-body photograph of one adult person, complete body from head to toe, both hands and feet visible",
@@ -103,54 +109,66 @@ def output_dimensions(source: Image.Image, request: PhotoReferenceRequest) -> tu
     return width, height
 
 
-def _compact_instruction(prompt: str, maximum: int = 420) -> str:
+def _compact_instruction(prompt: str, maximum: int = 640) -> str:
     text = re.sub(r"\s+", " ", prompt).strip()
     text = re.sub(r"^(?:Edit|Use|Extend) Picture 1\.\s*", "", text, flags=re.IGNORECASE)
     if len(text) <= maximum:
         return text
-    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
-    priority_words = (
-        "requested", "appearance", "background", "studio", "bedroom", "spa", "shower", "nature", "lakeside",
-        "pose", "standing", "sitting", "walking", "lighting", "lens", "nude", "unclothed", "full-body", "head to toe",
+    return text[:maximum].rsplit(" ", 1)[0].rstrip(" ,.;:")
+
+
+def requests_full_nudity(request: PhotoReferenceRequest) -> bool:
+    return request.prompt_template.startswith("adult_nude_") or FULL_NUDITY_TERMS.search(request.prompt) is not None
+
+
+def prompt_pair(request: PhotoReferenceRequest) -> tuple[str, str]:
+    template = TEMPLATE_PROMPTS.get(request.prompt_template, "")
+    nude = requests_full_nudity(request)
+    if nude:
+        mode = (
+            "apply the requested complete nudity and do not preserve any garment, underwear or clothing "
+            "from the identity reference"
+        )
+    else:
+        mode = {
+            "outfit": "apply the requested clothing and styling instead of copying the reference outfit",
+            "background": "apply the requested environment instead of copying the reference background",
+            "hair": "apply the requested hairstyle and makeup exactly",
+            "relight": "apply the requested photographic lighting and atmosphere exactly",
+            "free": "apply the requested scene, pose and appearance exactly",
+        }[request.edit_mode]
+    fidelity = {
+        "identity": "preserve the exact facial geometry and recognizable traits from the first reference",
+        "balanced": "preserve a clearly recognizable facial identity from the first reference",
+        "creative": "preserve recognizable core facial traits while allowing natural variation",
+    }[request.fidelity]
+    rating = "one clearly adult subject aged 18 or older" if request.content_rating == "adult" else "one adult subject"
+    user = _compact_instruction(request.prompt)
+    template_context = f" Supporting scene specification: {template}." if template else ""
+    primary = (
+        f"User instruction, highest priority: {user}.{template_context} RAW photorealistic photograph of {rating}. "
+        f"{mode}. {fidelity}. The requested pose, body language, clothing state, framing, action and background "
+        "must be visibly present; never replace them with a generic neutral standing portrait. Realistic skin texture, "
+        "anatomically correct body, natural proportions, sharp detailed face, physically plausible hands and feet, "
+        "professional photography and coherent natural lighting."
     )
-    selected: list[str] = []
-    for sentence in sentences:
-        lowered = sentence.lower()
-        if any(word in lowered for word in priority_words) and sentence not in selected:
-            selected.append(sentence)
-    if not selected:
-        selected = sentences[:2]
-    compact = " ".join(selected)
-    return compact[:maximum].rsplit(" ", 1)[0].rstrip(" ,.;:")
+    secondary = (
+        f"Follow this instruction literally: {user}.{template_context} {rating}. {mode}. {fidelity}. "
+        "Picture 1 controls facial identity only; it must not force the original clothes, pose, crop or background. "
+        "Prioritize the requested action and composition while keeping one coherent photorealistic person."
+    )
+    return primary, secondary
 
 
 def directed_prompt(request: PhotoReferenceRequest) -> str:
-    template = TEMPLATE_PROMPTS.get(request.prompt_template, "")
-    mode = {
-        "outfit": "requested clothing and styling",
-        "background": "requested environment and background",
-        "hair": "requested hairstyle and makeup",
-        "relight": "requested photographic lighting and atmosphere",
-        "free": "requested scene and appearance",
-    }[request.edit_mode]
-    fidelity = {
-        "identity": "strong facial identity match to the first reference",
-        "balanced": "recognizable facial identity with natural variation",
-        "creative": "recognizable identity with greater compositional freedom",
-    }[request.fidelity]
-    rating = "clearly adult subject aged 18 or older, " if request.content_rating == "adult" else "adult subject, "
-    user = _compact_instruction(request.prompt)
-    subject = template or user
-    extra = f", {user}" if template and user.lower() not in template.lower() else ""
-    return (
-        f"RAW photorealistic editorial photograph, {rating}{subject}{extra}, {mode}, {fidelity}, "
-        "one coherent person, realistic skin texture, anatomically correct body, natural proportions, "
-        "sharp detailed face, physically plausible hands and feet, professional photography, natural light"
-    )
+    return prompt_pair(request)[0]
 
 
 def negative_prompt(request: PhotoReferenceRequest) -> str:
-    return f"{request.negative_prompt}, {BASE_NEGATIVE}" if request.negative_prompt else BASE_NEGATIVE
+    parts = [request.negative_prompt, BASE_NEGATIVE]
+    if requests_full_nudity(request):
+        parts.append("clothed, clothes, hoodie, shirt, trousers, underwear, lingerie, bra, panties, swimsuit")
+    return ", ".join(part for part in parts if part)
 
 
 def _fallback_face_crop(image: Image.Image) -> Image.Image:
@@ -175,13 +193,31 @@ def face_reference(image: Image.Image) -> Image.Image:
             x, y, width, height = max(faces, key=lambda face: int(face[2]) * int(face[3]))
             center_x = x + width / 2
             center_y = y + height / 2
-            size = min(image.width, image.height, int(max(width, height) * 2.15))
+            size = min(image.width, image.height, int(max(width, height) * 1.60))
             left = max(0, min(image.width - size, int(center_x - size / 2)))
             top = max(0, min(image.height - size, int(center_y - size / 2)))
             return image.crop((left, top, left + size, top + size))
     except Exception:
         pass
     return _fallback_face_crop(image)
+
+
+def adapter_strengths(request: PhotoReferenceRequest, has_style_reference: bool) -> tuple[float, float, float]:
+    face_scale, reference_scale = {
+        "identity": (0.92, 0.30 if has_style_reference else 0.12),
+        "balanced": (0.82, 0.40 if has_style_reference else 0.18),
+        "creative": (0.70, 0.52 if has_style_reference else 0.28),
+    }[request.fidelity]
+    reference_factor, face_adjustment, guidance_scale = {
+        "strict": (0.72, 0.02, 6.5),
+        "balanced": (1.0, 0.0, 6.0),
+        "reference": (1.18, -0.04, 5.5),
+    }[request.prompt_adherence]
+    return (
+        min(0.96, max(0.0, face_scale + face_adjustment)),
+        min(0.65, max(0.0, reference_scale * reference_factor)),
+        guidance_scale,
+    )
 
 
 class RealVisEngine:
@@ -253,19 +289,19 @@ class RealVisEngine:
             identity = face_reference(source)
             seed = request.seed if request.seed >= 0 else secrets.randbelow(2_147_483_648)
             width, height = output_dimensions(source, request)
-            face_scale, reference_scale = {
-                "identity": (0.82, 0.38 if style_path is not None else 0.28),
-                "balanced": (0.70, 0.46 if style_path is not None else 0.34),
-                "creative": (0.56, 0.55 if style_path is not None else 0.40),
-            }[request.fidelity]
+            face_scale, reference_scale, guidance_scale = adapter_strengths(request, style_path is not None)
+            primary_prompt, secondary_prompt = prompt_pair(request)
+            negative = negative_prompt(request)
             with self._inference_lock, torch.inference_mode():
                 pipeline.set_ip_adapter_scale([face_scale, reference_scale])
                 result = pipeline(
-                    prompt=directed_prompt(request),
-                    negative_prompt=negative_prompt(request),
+                    prompt=primary_prompt,
+                    prompt_2=secondary_prompt,
+                    negative_prompt=negative,
+                    negative_prompt_2=negative,
                     ip_adapter_image=[identity, secondary],
                     generator=torch.Generator(device="cpu").manual_seed(seed),
-                    guidance_scale=5.0,
+                    guidance_scale=guidance_scale,
                     num_inference_steps=request.steps,
                     num_images_per_prompt=1,
                     width=width,
@@ -278,6 +314,7 @@ class RealVisEngine:
                 "height": output.height,
                 "face_scale": face_scale,
                 "reference_scale": reference_scale,
+                "guidance_scale": guidance_scale,
             }
         except InferenceError:
             raise

@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 CONTRACT_VERSION = "sethos.realvisxl.ip-adapter.v1"
 ALLOWED_MODES = {"outfit", "background", "hair", "relight", "free"}
 ALLOWED_FIDELITY = {"identity", "balanced", "creative"}
+ALLOWED_PROMPT_ADHERENCE = {"strict", "balanced", "reference"}
 ALLOWED_RATIOS = {"source", "1:1", "4:5", "3:4", "9:16", "16:9"}
 ALLOWED_RATINGS = {"standard", "adult"}
 ALLOWED_TEMPLATES = {
@@ -80,6 +81,7 @@ class PhotoReferenceRequest:
     negative_prompt: str
     edit_mode: str
     fidelity: str
+    prompt_adherence: str
     aspect_ratio: str
     quality: str
     content_rating: str
@@ -89,11 +91,20 @@ class PhotoReferenceRequest:
     def steps(self) -> int:
         return QUALITY_STEPS[self.quality]
 
-    def public_parameters(self, effective_seed: int, width: int, height: int, face_scale: float, reference_scale: float) -> dict[str, Any]:
+    def public_parameters(
+        self,
+        effective_seed: int,
+        width: int,
+        height: int,
+        face_scale: float,
+        reference_scale: float,
+        guidance_scale: float,
+    ) -> dict[str, Any]:
         return {
             "contract_version": self.contract_version,
             "edit_mode": self.edit_mode,
             "fidelity": self.fidelity,
+            "prompt_adherence": self.prompt_adherence,
             "aspect_ratio": self.aspect_ratio,
             "quality": self.quality,
             "steps": self.steps,
@@ -102,6 +113,7 @@ class PhotoReferenceRequest:
             "height": height,
             "identity_adapter_scale": face_scale,
             "reference_adapter_scale": reference_scale,
+            "guidance_scale": guidance_scale,
             "style_reference": bool(self.style_image_url),
         }
 
@@ -142,6 +154,9 @@ def parse_request(event: Any) -> PhotoReferenceRequest:
         negative_prompt=negative,
         edit_mode=_choice(data.get("edit_mode"), "edit_mode", ALLOWED_MODES, "free"),
         fidelity=_choice(data.get("fidelity"), "fidelity", ALLOWED_FIDELITY, "identity"),
+        prompt_adherence=_choice(
+            data.get("prompt_adherence"), "prompt_adherence", ALLOWED_PROMPT_ADHERENCE, "strict"
+        ),
         aspect_ratio=_choice(data.get("aspect_ratio"), "aspect_ratio", ALLOWED_RATIOS, "source"),
         quality=_choice(data.get("quality"), "quality", set(QUALITY_STEPS), "standard"),
         content_rating=rating,
