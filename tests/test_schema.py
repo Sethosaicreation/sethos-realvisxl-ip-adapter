@@ -26,6 +26,7 @@ def valid_input() -> dict:
             "quality": "standard",
             "content_rating": "standard",
             "adult_content_confirmed": False,
+            "rights_confirmed": True,
             "seed": -1,
         }
     }
@@ -40,6 +41,12 @@ class SchemaTests(unittest.TestCase):
     def test_adult_requires_confirmation(self) -> None:
         event = valid_input()
         event["input"].update({"content_rating": "adult", "prompt_template": "adult_nude_full_body"})
+        with self.assertRaises(InputError):
+            parse_request(event)
+
+    def test_requires_rights_confirmation(self) -> None:
+        event = valid_input()
+        event["input"]["rights_confirmed"] = False
         with self.assertRaises(InputError):
             parse_request(event)
 

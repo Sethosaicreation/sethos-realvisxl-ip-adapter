@@ -112,6 +112,8 @@ def parse_request(event: Any) -> PhotoReferenceRequest:
     data = event["input"]
     if data.get("contract_version") != CONTRACT_VERSION:
         raise InputError("Version de contrat worker incompatible.", "CONTRACT_MISMATCH")
+    if data.get("rights_confirmed") is not True:
+        raise InputError("La confirmation des droits et du consentement est obligatoire.")
     prompt = _text(data.get("prompt"), "prompt", 3, 2500)
     negative = data.get("negative_prompt", "")
     if not isinstance(negative, str):
