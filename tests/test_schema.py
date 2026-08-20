@@ -34,7 +34,7 @@ def valid_input() -> dict:
 class SchemaTests(unittest.TestCase):
     def test_valid_request(self) -> None:
         request = parse_request(valid_input())
-        self.assertEqual(request.steps, 35)
+        self.assertEqual(request.steps, 30)
         self.assertEqual(request.prompt_template, "full_body")
 
     def test_adult_requires_confirmation(self) -> None:

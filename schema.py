@@ -19,7 +19,7 @@ ALLOWED_TEMPLATES = {
     "adult_nude_full_body", "adult_nude_identity_body", "adult_nude_outpainting",
     "adult_nude_art_studio", "adult_nude_morning_room", "adult_nude_spa", "adult_nude_private_nature",
 }
-QUALITY_STEPS = {"preview": 25, "standard": 35, "quality": 45}
+QUALITY_STEPS = {"preview": 20, "standard": 30, "quality": 40}
 CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 MINOR_TERMS = re.compile(
     r"\b(?:minor|underage|child|children|teen(?:ager|agers|s)?|schoolgirl|schoolboy|loli(?:ta)?|"
