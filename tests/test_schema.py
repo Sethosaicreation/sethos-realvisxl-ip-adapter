@@ -48,14 +48,13 @@ class SchemaTests(unittest.TestCase):
         )
         self.assertIn("influencer-studio.php", parse_request(event).source_image_url)
 
-    def test_rejects_influencer_url_as_style_reference(self) -> None:
+    def test_accepts_influencer_url_as_style_reference(self) -> None:
         event = valid_input()
         event["input"]["style_image"] = (
             "https://sethosaicreation.fr/admin/api/influencer-studio.php"
             f"?action=input&id=inf_{'c' * 24}&token={'d' * 64}"
         )
-        with self.assertRaises(InputError):
-            parse_request(event)
+        self.assertIn("influencer-studio.php", parse_request(event).style_image_url)
 
     def test_rejects_unknown_prompt_adherence(self) -> None:
         event = valid_input()
