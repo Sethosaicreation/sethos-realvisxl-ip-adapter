@@ -22,7 +22,6 @@ accelerate launch \
   --caption_column="text" \
   --resolution=1024 \
   --center_crop \
-  --random_flip \
   --train_batch_size=1 \
   --gradient_accumulation_steps=4 \
   --gradient_checkpointing \
