@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import hashlib
 import os
 import re
 import secrets
@@ -21,13 +22,14 @@ ADAPTER_ID = os.getenv("IP_ADAPTER_MODEL_ID", "h94/IP-Adapter")
 ADAPTER_REVISION = os.getenv("IP_ADAPTER_MODEL_REVISION", "018e402774aeeddd60609b4ecdb7e298259dc729")
 MODEL_CACHE_ROOT = Path("/runpod-volume/huggingface-cache/hub")
 BAKED_ADAPTER_DIR = Path(os.getenv("IP_ADAPTER_MODEL_DIR", "/opt/models/ip-adapter"))
+CHARACTER_LORA_ROOT = Path(os.getenv("CHARACTER_LORA_ROOT", "/runpod-volume/sethos-lora"))
 
 FACE_WEIGHT = "ip-adapter-plus-face_sdxl_vit-h.safetensors"
 REFERENCE_WEIGHT = "ip-adapter-plus_sdxl_vit-h.safetensors"
 BASE_NEGATIVE = (
     "lowres, low quality, worst quality, blurry, jpeg artifacts, text, watermark, logo, "
     "deformed anatomy, disfigured, extra limbs, missing limbs, fused fingers, extra fingers, "
-    "bad hands, malformed feet, duplicate person, plastic skin, face asymmetry, eyes asymmetry, "
+    "bad hands, malformed feet, duplicate person, plastic skin, waxy skin, beauty filter, "
     "deformed eyes, deformed mouth, distorted face, altered facial structure, different person"
 )
 FULL_NUDITY_TERMS = re.compile(
@@ -109,7 +111,7 @@ def output_dimensions(source: Image.Image, request: PhotoReferenceRequest) -> tu
     return width, height
 
 
-def _compact_instruction(prompt: str, maximum: int = 640) -> str:
+def _compact_instruction(prompt: str, maximum: int = 950) -> str:
     text = re.sub(r"\s+", " ", prompt).strip()
     text = re.sub(r"^(?:Edit|Use|Extend) Picture 1\.\s*", "", text, flags=re.IGNORECASE)
     if len(text) <= maximum:
@@ -144,16 +146,17 @@ def prompt_pair(request: PhotoReferenceRequest) -> tuple[str, str]:
     }[request.fidelity]
     rating = "one clearly adult subject aged 18 or older" if request.content_rating == "adult" else "one adult subject"
     user = _compact_instruction(request.prompt)
+    character = f"photo of {request.character_trigger} woman. " if request.character_trigger else ""
     template_context = f" Supporting scene specification: {template}." if template else ""
     primary = (
-        f"User instruction, highest priority: {user}.{template_context} RAW photorealistic photograph of {rating}. "
+        f"{character}User instruction, highest priority: {user}.{template_context} RAW personal recent-phone photograph of {rating}. "
         f"{mode}. {fidelity}. The requested pose, body language, clothing state, framing, action and background "
         "must be visibly present; never replace them with a generic neutral standing portrait. Realistic skin texture, "
         "anatomically correct body, natural proportions, sharp detailed face, physically plausible hands and feet, "
-        "professional photography and coherent natural lighting."
+        "raw personal-camera texture and coherent practical lighting."
     )
     secondary = (
-        f"Follow this instruction literally: {user}.{template_context} {rating}. {mode}. {fidelity}. "
+        f"{character}Follow this instruction literally: {user}.{template_context} {rating}. {mode}. {fidelity}. "
         "Picture 1 controls facial identity only; it must not force the original clothes, pose, crop or background. "
         "Prioritize the requested action and composition while keeping one coherent photorealistic person."
     )
@@ -202,7 +205,11 @@ def face_reference(image: Image.Image) -> Image.Image:
     return _fallback_face_crop(image)
 
 
-def adapter_strengths(request: PhotoReferenceRequest, has_style_reference: bool) -> tuple[float, float, float]:
+def adapter_strengths(
+    request: PhotoReferenceRequest,
+    has_style_reference: bool,
+    has_character_lora: bool = False,
+) -> tuple[float, float, float]:
     face_scale, reference_scale = {
         "identity": (0.92, 0.30 if has_style_reference else 0.12),
         "balanced": (0.82, 0.40 if has_style_reference else 0.18),
@@ -213,11 +220,37 @@ def adapter_strengths(request: PhotoReferenceRequest, has_style_reference: bool)
         "balanced": (1.0, 0.0, 6.0),
         "reference": (1.18, -0.04, 5.5),
     }[request.prompt_adherence]
+    effective_face_scale = min(0.96, max(0.0, face_scale + face_adjustment))
+    if has_character_lora:
+        # The trained adapter owns identity. Keeping a moderate facial image
+        # adapter stabilises freckles and eye colour without pulling the
+        # canonical pose back into every generation.
+        effective_face_scale = min(0.38, effective_face_scale * 0.48)
     return (
-        min(0.96, max(0.0, face_scale + face_adjustment)),
+        effective_face_scale,
         min(0.65, max(0.0, reference_scale * reference_factor)),
         guidance_scale,
     )
+
+
+def resolve_character_lora(request: PhotoReferenceRequest) -> Path | None:
+    if not request.character_lora:
+        return None
+    candidate = CHARACTER_LORA_ROOT / request.character_lora / "pytorch_lora_weights.safetensors"
+    try:
+        resolved_root = CHARACTER_LORA_ROOT.resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+    except OSError as error:
+        raise InferenceError(f"Artefact LoRA privé introuvable : {request.character_lora}.") from error
+    if resolved_root not in resolved.parents or not resolved.is_file() or resolved.is_symlink():
+        raise InferenceError("Chemin de l’artefact LoRA privé invalide.")
+    digest = hashlib.sha256()
+    with resolved.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if not secrets.compare_digest(digest.hexdigest(), request.character_lora_sha256):
+        raise InferenceError("Empreinte SHA-256 du LoRA privé incorrecte.")
+    return resolved
 
 
 class RealVisEngine:
@@ -225,6 +258,27 @@ class RealVisEngine:
         self._pipeline: Any | None = None
         self._load_lock = threading.Lock()
         self._inference_lock = threading.Lock()
+        self._active_lora: tuple[str, float] | None = None
+
+    def _activate_character_lora(
+        self, pipeline: Any, request: PhotoReferenceRequest, lora_path: Path | None
+    ) -> None:
+        requested = (request.character_lora, round(request.lora_scale, 4)) if lora_path is not None else None
+        if requested == self._active_lora:
+            return
+        if self._active_lora is not None:
+            pipeline.unload_lora_weights()
+            self._active_lora = None
+        if lora_path is None:
+            return
+        pipeline.load_lora_weights(
+            str(lora_path.parent),
+            weight_name=lora_path.name,
+            adapter_name="character",
+            local_files_only=True,
+        )
+        pipeline.set_adapters(["character"], adapter_weights=[request.lora_scale])
+        self._active_lora = requested
 
     def _load(self) -> Any:
         if self._pipeline is not None:
@@ -289,10 +343,14 @@ class RealVisEngine:
             identity = face_reference(source)
             seed = request.seed if request.seed >= 0 else secrets.randbelow(2_147_483_648)
             width, height = output_dimensions(source, request)
-            face_scale, reference_scale, guidance_scale = adapter_strengths(request, style_path is not None)
+            lora_path = resolve_character_lora(request)
+            face_scale, reference_scale, guidance_scale = adapter_strengths(
+                request, style_path is not None, lora_path is not None
+            )
             primary_prompt, secondary_prompt = prompt_pair(request)
             negative = negative_prompt(request)
             with self._inference_lock, torch.inference_mode():
+                self._activate_character_lora(pipeline, request, lora_path)
                 pipeline.set_ip_adapter_scale([face_scale, reference_scale])
                 result = pipeline(
                     prompt=primary_prompt,
@@ -315,6 +373,8 @@ class RealVisEngine:
                 "face_scale": face_scale,
                 "reference_scale": reference_scale,
                 "guidance_scale": guidance_scale,
+                "character_lora": request.character_lora,
+                "lora_scale": request.lora_scale if request.character_lora else 0.0,
             }
         except InferenceError:
             raise

@@ -51,6 +51,22 @@ class PromptingTests(unittest.TestCase):
         self.assertGreater(reference[1], strict[1])
         self.assertLess(reference[2], strict[2])
 
+    def test_lora_trigger_leads_both_prompts(self) -> None:
+        primary, secondary = prompt_pair(request(
+            character_lora="zoe-aoki-v1",
+            character_lora_sha256="a" * 64,
+            character_trigger="skszoeaoki",
+            lora_scale=0.78,
+        ))
+        self.assertTrue(primary.startswith("photo of skszoeaoki woman."))
+        self.assertTrue(secondary.startswith("photo of skszoeaoki woman."))
+
+    def test_lora_reduces_pose_pull_from_face_adapter(self) -> None:
+        normal = adapter_strengths(request(), True)
+        canary = adapter_strengths(request(character_lora="zoe-aoki-v1"), True, True)
+        self.assertLess(canary[0], normal[0])
+        self.assertGreater(canary[0], 0.2)
+
 
 if __name__ == "__main__":
     unittest.main()

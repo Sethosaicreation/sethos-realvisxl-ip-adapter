@@ -69,9 +69,10 @@ def _signed_image_url(value: Any, field: str, required: bool) -> str:
         and query.get("action") == ["input"] and query.get("slot") in (["source"], ["style"]) \
         and re.fullmatch(r"pe_[a-f0-9]{24}", query.get("id", [""])[0]) is not None \
         and len(query.get("token", [])) == 1 and re.fullmatch(r"[a-f0-9]{64}", query["token"][0]) is not None
+    influencer_actions = (["input"],) if field == "source_image" else (["input"], ["home-input"])
     influencer_url = field in {"source_image", "style_image"} \
         and parsed.path == "/admin/api/influencer-studio.php" \
-        and set(query) == {"action", "id", "token"} and query.get("action") == ["input"] \
+        and set(query) == {"action", "id", "token"} and query.get("action") in influencer_actions \
         and re.fullmatch(r"inf_[a-f0-9]{24}", query.get("id", [""])[0]) is not None \
         and len(query.get("token", [])) == 1 and re.fullmatch(r"[a-f0-9]{64}", query["token"][0]) is not None
     if not editor_url and not influencer_url:
@@ -94,6 +95,10 @@ class PhotoReferenceRequest:
     quality: str
     content_rating: str
     seed: int
+    character_lora: str = ""
+    character_lora_sha256: str = ""
+    character_trigger: str = ""
+    lora_scale: float = 0.78
 
     @property
     def steps(self) -> int:
@@ -123,6 +128,9 @@ class PhotoReferenceRequest:
             "reference_adapter_scale": reference_scale,
             "guidance_scale": guidance_scale,
             "style_reference": bool(self.style_image_url),
+            "character_lora": self.character_lora,
+            "character_trigger": self.character_trigger,
+            "lora_scale": self.lora_scale if self.character_lora else 0.0,
         }
 
 
@@ -153,6 +161,26 @@ def parse_request(event: Any) -> PhotoReferenceRequest:
     template = _choice(data.get("prompt_template"), "prompt_template", ALLOWED_TEMPLATES, "")
     if template.startswith("adult_") and rating != "adult":
         raise InputError("Un template adulte exige la classification 18+.")
+    character_lora = str(data.get("character_lora", "") or "").strip().lower()
+    character_lora_sha256 = str(data.get("character_lora_sha256", "") or "").strip().lower()
+    character_trigger = str(data.get("character_trigger", "") or "").strip().lower()
+    lora_scale_value = data.get("lora_scale", 0.78)
+    if character_lora:
+        if re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,79}", character_lora) is None:
+            raise InputError("Identifiant character_lora invalide.")
+        if re.fullmatch(r"[a-f0-9]{64}", character_lora_sha256) is None:
+            raise InputError("Empreinte character_lora_sha256 invalide.")
+        if re.fullmatch(r"[a-z][a-z0-9]{3,39}", character_trigger) is None:
+            raise InputError("Token character_trigger invalide.")
+        if isinstance(lora_scale_value, bool) or not isinstance(lora_scale_value, (int, float)):
+            raise InputError("Force lora_scale invalide.")
+        lora_scale = float(lora_scale_value)
+        if not 0.35 <= lora_scale <= 1.20:
+            raise InputError("La force lora_scale doit être comprise entre 0,35 et 1,20.")
+    else:
+        if character_lora_sha256 or character_trigger:
+            raise InputError("character_lora est obligatoire avec les métadonnées LoRA.")
+        lora_scale = 0.78
     return PhotoReferenceRequest(
         contract_version=CONTRACT_VERSION,
         source_image_url=_signed_image_url(data.get("source_image"), "source_image", True),
@@ -169,4 +197,8 @@ def parse_request(event: Any) -> PhotoReferenceRequest:
         quality=_choice(data.get("quality"), "quality", set(QUALITY_STEPS), "standard"),
         content_rating=rating,
         seed=seed,
+        character_lora=character_lora,
+        character_lora_sha256=character_lora_sha256,
+        character_trigger=character_trigger,
+        lora_scale=lora_scale,
     )

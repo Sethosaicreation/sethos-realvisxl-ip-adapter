@@ -40,6 +40,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /opt/models/ip-adapter /opt/models/ip-adapter
 
 ENV HF_HOME=/runpod-volume/huggingface-cache \
+    CHARACTER_LORA_ROOT=/runpod-volume/sethos-lora \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     TOKENIZERS_PARALLELISM=false

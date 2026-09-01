@@ -56,6 +56,36 @@ class SchemaTests(unittest.TestCase):
         )
         self.assertIn("influencer-studio.php", parse_request(event).style_image_url)
 
+    def test_accepts_signed_home_reference_as_style(self) -> None:
+        event = valid_input()
+        event["input"]["style_image"] = (
+            "https://sethosaicreation.fr/admin/api/influencer-studio.php"
+            f"?action=home-input&id=inf_{'c' * 24}&token={'d' * 64}"
+        )
+        self.assertIn("action=home-input", parse_request(event).style_image_url)
+
+    def test_accepts_character_lora_canary(self) -> None:
+        event = valid_input()
+        event["input"].update({
+            "character_lora": "zoe-aoki-v1",
+            "character_lora_sha256": "e" * 64,
+            "character_trigger": "skszoeaoki",
+            "lora_scale": 0.76,
+        })
+        request = parse_request(event)
+        self.assertEqual(request.character_lora, "zoe-aoki-v1")
+        self.assertEqual(request.character_trigger, "skszoeaoki")
+        self.assertAlmostEqual(request.lora_scale, 0.76)
+
+    def test_rejects_lora_without_sha256(self) -> None:
+        event = valid_input()
+        event["input"].update({
+            "character_lora": "zoe-aoki-v1",
+            "character_trigger": "skszoeaoki",
+        })
+        with self.assertRaises(InputError):
+            parse_request(event)
+
     def test_rejects_unknown_prompt_adherence(self) -> None:
         event = valid_input()
         event["input"]["prompt_adherence"] = "absolute"

@@ -10,6 +10,7 @@ Second moteur de **Administration > Outils créatifs > Créateur photo**.
 - Réglage `prompt_adherence` : `strict` (texte prioritaire), `balanced` ou `reference`
 - Sortie : WebP encodé en base64 puis copié dans le stockage privé Sethos
 - Sécurité : validation 18+, refus des termes liés aux mineurs et confirmation du consentement en amont
+- Canary LoRA privé facultatif : artefact chargé depuis le volume persistant, identifiant borné et empreinte SHA-256 vérifiée avant toute génération
 
 Ce moteur reconstruit une nouvelle photographie guidée par les références. Il est volontairement complémentaire de Qwen Image Edit, qui reste plus adapté aux retouches locales conservant exactement la composition d’origine.
 
@@ -22,6 +23,13 @@ Le dépôt IP-Adapter minimal est intégré à l’image Docker. Dans le champ *
 `SG161222/RealVisXL_V5.0`
 
 RunPod monte le snapshot RealVisXL sous `/runpod-volume/huggingface-cache/hub/`. Le worker refuse tout téléchargement de poids pendant une tâche facturée.
+
+Un LoRA de personnage validé se place dans
+`/runpod-volume/sethos-lora/<artifact_id>/pytorch_lora_weights.safetensors`.
+Le site transmet `artifact_id`, le token du personnage, la force du LoRA et le
+SHA-256 attendu. Le worker refuse un chemin hors volume, un fichier absent ou
+une empreinte différente. Sans ces quatre champs, le chemin historique reste
+strictement inchangé.
 
 Configuration recommandée : GPU de 24 Gio ou plus, `workersMin=0`, `workersMax=1`, disque conteneur de 50 Gio, arrêt après 5 secondes d’inactivité.
 
