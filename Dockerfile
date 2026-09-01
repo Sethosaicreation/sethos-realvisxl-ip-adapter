@@ -18,6 +18,7 @@ RUN python -m pip install \
     && python -m pip install -r /worker/requirements-worker.txt
 
 RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='h94/IP-Adapter', revision='018e402774aeeddd60609b4ecdb7e298259dc729', local_dir='/opt/models/ip-adapter', allow_patterns=['models/image_encoder/config.json','models/image_encoder/model.safetensors','sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors','sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors'])"
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='SG161222/RealVisXL_V5.0', revision='ac93e0dda1f6d448cae19bbfab8c5e720a5e48bc', local_dir='/opt/models/realvis-config', allow_patterns=['*.json','**/*.json','*.txt','**/*.txt'])"
 
 FROM nvidia/cuda:12.8.1-base-ubuntu24.04
 
@@ -29,7 +30,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     REALVIS_MODEL_REVISION=ac93e0dda1f6d448cae19bbfab8c5e720a5e48bc \
     IP_ADAPTER_MODEL_ID=h94/IP-Adapter \
     IP_ADAPTER_MODEL_REVISION=018e402774aeeddd60609b4ecdb7e298259dc729 \
-    IP_ADAPTER_MODEL_DIR=/opt/models/ip-adapter
+    IP_ADAPTER_MODEL_DIR=/opt/models/ip-adapter \
+    REALVIS_CONFIG_DIR=/opt/models/realvis-config
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 python3 \
@@ -38,6 +40,7 @@ RUN apt-get update \
 WORKDIR /worker
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /opt/models/ip-adapter /opt/models/ip-adapter
+COPY --from=builder /opt/models/realvis-config /opt/models/realvis-config
 
 ENV HF_HOME=/runpod-volume/huggingface-cache \
     CHARACTER_LORA_ROOT=/runpod-volume/sethos-lora \
@@ -49,7 +52,10 @@ COPY schema.py media.py inference.py handler.py /worker/
 RUN python -m py_compile /worker/schema.py /worker/media.py /worker/inference.py /worker/handler.py \
     && python -c "from diffusers import AutoPipelineForText2Image; from transformers import CLIPVisionModelWithProjection; from peft import PeftModel; assert AutoPipelineForText2Image and CLIPVisionModelWithProjection and PeftModel" \
     && test -f /opt/models/ip-adapter/sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors \
-    && test -f /opt/models/ip-adapter/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors
+    && test -f /opt/models/ip-adapter/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors \
+    && test -f /opt/models/realvis-config/model_index.json \
+    && test -f /opt/models/realvis-config/unet/config.json \
+    && test -f /opt/models/realvis-config/vae/config.json
 
 ENTRYPOINT []
 CMD ["python", "-u", "/worker/handler.py"]

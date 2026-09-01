@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from inference import adapter_strengths, negative_prompt, prompt_pair
+from inference import InferenceError, adapter_strengths, negative_prompt, prompt_pair, resolve_pipeline_source
 from schema import CONTRACT_VERSION, PhotoReferenceRequest
 
 
@@ -27,6 +29,44 @@ def request(**overrides: object) -> PhotoReferenceRequest:
 
 
 class PromptingTests(unittest.TestCase):
+    def test_complete_diffusers_snapshot_is_preferred(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model = root / "model"
+            config = root / "config"
+            model.mkdir()
+            config.mkdir()
+            (model / "model_index.json").write_text("{}", encoding="utf-8")
+            kind, source, fallback = resolve_pipeline_source(model, config)
+            self.assertEqual(kind, "diffusers")
+            self.assertEqual(source, model)
+            self.assertIsNone(fallback)
+
+    def test_missing_model_index_uses_fp16_single_file(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model = root / "model"
+            config = root / "config"
+            model.mkdir()
+            config.mkdir()
+            checkpoint = model / "RealVisXL_V5.0_fp16.safetensors"
+            checkpoint.write_bytes(b"test")
+            (config / "model_index.json").write_text("{}", encoding="utf-8")
+            kind, source, fallback = resolve_pipeline_source(model, config)
+            self.assertEqual(kind, "single_file")
+            self.assertEqual(source, checkpoint)
+            self.assertEqual(fallback, config)
+
+    def test_incomplete_cache_fails_with_actionable_error(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model = root / "model"
+            config = root / "config"
+            model.mkdir()
+            config.mkdir()
+            with self.assertRaisesRegex(InferenceError, "Cache RealVisXL incomplet"):
+                resolve_pipeline_source(model, config)
+
     def test_user_instruction_leads_both_sdxl_prompts(self) -> None:
         primary, secondary = prompt_pair(request())
         self.assertTrue(primary.startswith("User instruction, highest priority: full body"))

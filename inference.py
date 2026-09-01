@@ -22,6 +22,7 @@ ADAPTER_ID = os.getenv("IP_ADAPTER_MODEL_ID", "h94/IP-Adapter")
 ADAPTER_REVISION = os.getenv("IP_ADAPTER_MODEL_REVISION", "018e402774aeeddd60609b4ecdb7e298259dc729")
 MODEL_CACHE_ROOT = Path("/runpod-volume/huggingface-cache/hub")
 BAKED_ADAPTER_DIR = Path(os.getenv("IP_ADAPTER_MODEL_DIR", "/opt/models/ip-adapter"))
+BAKED_REALVIS_CONFIG_DIR = Path(os.getenv("REALVIS_CONFIG_DIR", "/opt/models/realvis-config"))
 CHARACTER_LORA_ROOT = Path(os.getenv("CHARACTER_LORA_ROOT", "/runpod-volume/sethos-lora"))
 
 FACE_WEIGHT = "ip-adapter-plus-face_sdxl_vit-h.safetensors"
@@ -82,6 +83,38 @@ def _snapshot_dir(model_id: str, revision: str, configured: str = "") -> Path:
 
 def resolve_model_dir() -> Path:
     return _snapshot_dir(MODEL_ID, MODEL_REVISION, os.getenv("REALVIS_MODEL_DIR", "").strip())
+
+
+def resolve_pipeline_source(model_dir: Path, config_dir: Path = BAKED_REALVIS_CONFIG_DIR) -> tuple[str, Path, Path | None]:
+    """Resolve either a complete Diffusers tree or RealVisXL's FP16 checkpoint.
+
+    RunPod cached models normally expose the full Hugging Face snapshot, but a
+    cached host can occasionally expose the large files before the tiny root
+    ``model_index.json``. RealVisXL publishes both layouts at the pinned
+    revision, so the worker can safely fall back to the FP16 single-file
+    checkpoint with configuration baked into the container.
+    """
+    if (model_dir / "model_index.json").is_file():
+        return "diffusers", model_dir, None
+
+    configured = os.getenv("REALVIS_SINGLE_FILE", "").strip()
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend([
+        model_dir / "RealVisXL_V5.0_fp16.safetensors",
+        model_dir / "realvisxlV50_v50Bakedvae.safetensors",
+    ])
+    candidates.extend(sorted(model_dir.glob("*fp16*.safetensors")))
+    checkpoint = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if checkpoint is None:
+        raise InferenceError(
+            "Cache RealVisXL incomplet : model_index.json et checkpoint FP16 sont absents. "
+            "Retirez puis rattachez le modèle mis en cache à l’endpoint RunPod."
+        )
+    if not (config_dir / "model_index.json").is_file():
+        raise InferenceError("Configuration locale RealVisXL absente de l’image du worker.")
+    return "single_file", checkpoint, config_dir
 
 
 def resolve_adapter_dir() -> Path:
@@ -288,7 +321,7 @@ class RealVisEngine:
                 return self._pipeline
             try:
                 import torch
-                from diffusers import AutoPipelineForText2Image, DPMSolverMultistepScheduler
+                from diffusers import AutoPipelineForText2Image, DPMSolverMultistepScheduler, StableDiffusionXLPipeline
                 from transformers import CLIPVisionModelWithProjection
 
                 if not torch.cuda.is_available():
@@ -300,15 +333,26 @@ class RealVisEngine:
                 image_encoder = CLIPVisionModelWithProjection.from_pretrained(
                     str(image_encoder_dir), torch_dtype=torch.float16, local_files_only=True,
                 )
-                pipeline = AutoPipelineForText2Image.from_pretrained(
-                    str(resolve_model_dir()),
-                    image_encoder=image_encoder,
-                    torch_dtype=torch.float16,
-                    local_files_only=True,
-                    low_cpu_mem_usage=True,
-                    use_safetensors=True,
-                    add_watermarker=False,
-                )
+                source_kind, model_source, config_source = resolve_pipeline_source(resolve_model_dir())
+                common_load_options = {
+                    "image_encoder": image_encoder,
+                    "torch_dtype": torch.float16,
+                    "local_files_only": True,
+                    "low_cpu_mem_usage": True,
+                    "use_safetensors": True,
+                    "add_watermarker": False,
+                }
+                if source_kind == "single_file":
+                    pipeline = StableDiffusionXLPipeline.from_single_file(
+                        str(model_source),
+                        config=str(config_source),
+                        **common_load_options,
+                    )
+                else:
+                    pipeline = AutoPipelineForText2Image.from_pretrained(
+                        str(model_source),
+                        **common_load_options,
+                    )
                 pipeline.scheduler = DPMSolverMultistepScheduler.from_config(
                     pipeline.scheduler.config, algorithm_type="sde-dpmsolver++", use_karras_sigmas=True,
                 )
