@@ -47,7 +47,7 @@ ENV HF_HOME=/runpod-volume/huggingface-cache \
 
 COPY schema.py media.py inference.py handler.py /worker/
 RUN python -m py_compile /worker/schema.py /worker/media.py /worker/inference.py /worker/handler.py \
-    && python -c "from diffusers import AutoPipelineForText2Image; from transformers import CLIPVisionModelWithProjection; assert AutoPipelineForText2Image and CLIPVisionModelWithProjection" \
+    && python -c "from diffusers import AutoPipelineForText2Image; from transformers import CLIPVisionModelWithProjection; from peft import PeftModel; assert AutoPipelineForText2Image and CLIPVisionModelWithProjection and PeftModel" \
     && test -f /opt/models/ip-adapter/sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors \
     && test -f /opt/models/ip-adapter/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors
 
