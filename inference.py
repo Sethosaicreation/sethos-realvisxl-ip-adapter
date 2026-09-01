@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import secrets
+import shutil
 import threading
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ ADAPTER_REVISION = os.getenv("IP_ADAPTER_MODEL_REVISION", "018e402774aeeddd60609
 MODEL_CACHE_ROOT = Path("/runpod-volume/huggingface-cache/hub")
 BAKED_ADAPTER_DIR = Path(os.getenv("IP_ADAPTER_MODEL_DIR", "/opt/models/ip-adapter"))
 BAKED_REALVIS_CONFIG_DIR = Path(os.getenv("REALVIS_CONFIG_DIR", "/opt/models/realvis-config"))
+MERGED_REALVIS_DIR = Path(os.getenv("REALVIS_MERGED_DIR", "/tmp/sethos-realvis-pipeline"))
 CHARACTER_LORA_ROOT = Path(os.getenv("CHARACTER_LORA_ROOT", "/runpod-volume/sethos-lora"))
 
 FACE_WEIGHT = "ip-adapter-plus-face_sdxl_vit-h.safetensors"
@@ -85,6 +87,53 @@ def resolve_model_dir() -> Path:
     return _snapshot_dir(MODEL_ID, MODEL_REVISION, os.getenv("REALVIS_MODEL_DIR", "").strip())
 
 
+def _component_has_weights(model_dir: Path, component: str) -> bool:
+    directory = model_dir / component
+    if not directory.is_dir():
+        return False
+    return any(
+        candidate.is_file() and candidate.suffix in {".safetensors", ".bin"}
+        for candidate in directory.rglob("*")
+    )
+
+
+def materialize_diffusers_layout(
+    model_dir: Path,
+    config_dir: Path = BAKED_REALVIS_CONFIG_DIR,
+    destination: Path = MERGED_REALVIS_DIR,
+) -> Path:
+    """Overlay baked configs onto RunPod's weight-only cached snapshot.
+
+    RunPod can expose only the large LFS weight objects for a cached model.
+    Diffusers still needs the small JSON/tokenizer files.  A local merged tree
+    keeps those baked files and links to the cached weights without copying
+    several gigabytes into the container disk.
+    """
+    if not (config_dir / "model_index.json").is_file():
+        raise InferenceError("Configuration locale RealVisXL absente de l’image du worker.")
+    required_components = ("unet", "vae", "text_encoder", "text_encoder_2")
+    missing = [component for component in required_components if not _component_has_weights(model_dir, component)]
+    if missing:
+        raise InferenceError(
+            "Cache RealVisXL incomplet : poids absents pour " + ", ".join(missing) + ". "
+            "Retirez puis rattachez le modèle mis en cache à l’endpoint RunPod."
+        )
+
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(config_dir, destination)
+    for source in model_dir.rglob("*"):
+        if not source.is_file():
+            continue
+        relative = source.relative_to(model_dir)
+        target = destination / relative
+        if target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(source.resolve())
+    return destination
+
+
 def resolve_pipeline_source(model_dir: Path, config_dir: Path = BAKED_REALVIS_CONFIG_DIR) -> tuple[str, Path, Path | None]:
     """Resolve either a complete Diffusers tree or RealVisXL's FP16 checkpoint.
 
@@ -107,14 +156,15 @@ def resolve_pipeline_source(model_dir: Path, config_dir: Path = BAKED_REALVIS_CO
     ])
     candidates.extend(sorted(model_dir.glob("*fp16*.safetensors")))
     checkpoint = next((candidate for candidate in candidates if candidate.is_file()), None)
-    if checkpoint is None:
-        raise InferenceError(
-            "Cache RealVisXL incomplet : model_index.json et checkpoint FP16 sont absents. "
-            "Retirez puis rattachez le modèle mis en cache à l’endpoint RunPod."
-        )
-    if not (config_dir / "model_index.json").is_file():
-        raise InferenceError("Configuration locale RealVisXL absente de l’image du worker.")
-    return "single_file", checkpoint, config_dir
+    if checkpoint is not None:
+        if not (config_dir / "model_index.json").is_file():
+            raise InferenceError("Configuration locale RealVisXL absente de l’image du worker.")
+        return "single_file", checkpoint, config_dir
+
+    # Cached-model hosts can expose a weight-only Diffusers tree. Merge the
+    # immutable baked metadata with symlinks to those weights locally.
+    merged = materialize_diffusers_layout(model_dir, config_dir)
+    return "diffusers", merged, None
 
 
 def resolve_adapter_dir() -> Path:

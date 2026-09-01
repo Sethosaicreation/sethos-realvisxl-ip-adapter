@@ -25,10 +25,11 @@ Le dépôt IP-Adapter minimal est intégré à l’image Docker. Dans le champ *
 RunPod monte le snapshot RealVisXL sous `/runpod-volume/huggingface-cache/hub/`. Le worker refuse tout téléchargement de poids pendant une tâche facturée.
 
 Le dépôt RealVisXL publie simultanément un pipeline Diffusers et un checkpoint
-FP16 unique. Le worker privilégie le pipeline complet ; si un hôte RunPod monte
-un cache dépourvu du petit fichier `model_index.json`, il charge automatiquement
-`RealVisXL_V5.0_fp16.safetensors` avec la configuration légère intégrée à
-l’image Docker. Cette reprise ne télécharge rien pendant le job.
+FP16 unique. Le worker privilégie le pipeline complet. Si RunPod expose un
+cache Diffusers contenant seulement les poids, il superpose la configuration
+légère intégrée à l’image Docker et lie les poids sans les recopier. Si le cache
+contient plutôt le checkpoint `RealVisXL_V5.0_fp16.safetensors`, il utilise le
+chargeur fichier unique. Ces reprises ne téléchargent rien pendant le job.
 
 Un LoRA de personnage validé se place dans
 `/runpod-volume/sethos-lora/<artifact_id>/pytorch_lora_weights.safetensors`.

@@ -4,7 +4,14 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from inference import InferenceError, adapter_strengths, negative_prompt, prompt_pair, resolve_pipeline_source
+from inference import (
+    InferenceError,
+    adapter_strengths,
+    materialize_diffusers_layout,
+    negative_prompt,
+    prompt_pair,
+    resolve_pipeline_source,
+)
 from schema import CONTRACT_VERSION, PhotoReferenceRequest
 
 
@@ -57,6 +64,25 @@ class PromptingTests(unittest.TestCase):
             self.assertEqual(source, checkpoint)
             self.assertEqual(fallback, config)
 
+    def test_weight_only_diffusers_cache_is_merged_with_baked_config(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model = root / "model"
+            config = root / "config"
+            merged = root / "merged"
+            model.mkdir()
+            config.mkdir()
+            (config / "model_index.json").write_text("{}", encoding="utf-8")
+            for component in ("unet", "vae", "text_encoder", "text_encoder_2"):
+                (model / component).mkdir()
+                (model / component / "weights.safetensors").write_bytes(component.encode())
+                (config / component).mkdir()
+                (config / component / "config.json").write_text("{}", encoding="utf-8")
+            result = materialize_diffusers_layout(model, config, merged)
+            self.assertEqual(result, merged)
+            self.assertTrue((merged / "model_index.json").is_file())
+            self.assertTrue((merged / "unet" / "weights.safetensors").is_symlink())
+
     def test_incomplete_cache_fails_with_actionable_error(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -64,6 +90,7 @@ class PromptingTests(unittest.TestCase):
             config = root / "config"
             model.mkdir()
             config.mkdir()
+            (config / "model_index.json").write_text("{}", encoding="utf-8")
             with self.assertRaisesRegex(InferenceError, "Cache RealVisXL incomplet"):
                 resolve_pipeline_source(model, config)
 
