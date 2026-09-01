@@ -33,9 +33,6 @@ accelerate launch \
   --max_train_steps="${STEPS}" \
   --checkpointing_steps=400 \
   --seed="${SEED}" \
-  --output_dir="${OUTPUT_DIR}" \
-  --validation_prompt="raw recent-phone photo of ${INSTANCE_TOKEN} woman, natural face, realistic skin" \
-  --num_validation_images=2 \
-  --validation_epochs=5
+  --output_dir="${OUTPUT_DIR}"
 
 sha256sum "${OUTPUT_DIR}/pytorch_lora_weights.safetensors"
