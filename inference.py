@@ -279,7 +279,12 @@ def face_reference(image: Image.Image) -> Image.Image:
             x, y, width, height = max(faces, key=lambda face: int(face[2]) * int(face[3]))
             center_x = x + width / 2
             center_y = y + height / 2
-            size = min(image.width, image.height, int(max(width, height) * 1.60))
+            # Keep the identity adapter genuinely face-only.  A 1.60 crop on
+            # Zoe's canonical portrait still contained the hand in her hair,
+            # shoulders and grey shirt; at higher identity weights those
+            # leaked back as a repeated pose and outfit.  1.25 preserves the
+            # hairline, ears and jaw while excluding those composition cues.
+            size = min(image.width, image.height, int(max(width, height) * 1.25))
             left = max(0, min(image.width - size, int(center_x - size / 2)))
             top = max(0, min(image.height - size, int(center_y - size / 2)))
             return image.crop((left, top, left + size, top + size))
