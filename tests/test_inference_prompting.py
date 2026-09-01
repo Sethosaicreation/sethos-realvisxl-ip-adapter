@@ -128,11 +128,13 @@ class PromptingTests(unittest.TestCase):
         self.assertTrue(primary.startswith("photo of skszoeaoki woman."))
         self.assertTrue(secondary.startswith("photo of skszoeaoki woman."))
 
-    def test_lora_reduces_pose_pull_from_face_adapter(self) -> None:
+    def test_lora_keeps_face_authoritative_without_letting_style_dominate(self) -> None:
         normal = adapter_strengths(request(), True)
         canary = adapter_strengths(request(character_lora="zoe-aoki-v1"), True, True)
         self.assertLess(canary[0], normal[0])
-        self.assertGreater(canary[0], 0.2)
+        self.assertGreaterEqual(canary[0], 0.54)
+        self.assertLessEqual(canary[0], 0.64)
+        self.assertLessEqual(canary[1], 0.30)
 
 
 if __name__ == "__main__":

@@ -305,10 +305,15 @@ def adapter_strengths(
     }[request.prompt_adherence]
     effective_face_scale = min(0.96, max(0.0, face_scale + face_adjustment))
     if has_character_lora:
-        # The trained adapter owns identity. Keeping a moderate facial image
-        # adapter stabilises freckles and eye colour without pulling the
-        # canonical pose back into every generation.
-        effective_face_scale = min(0.38, effective_face_scale * 0.48)
+        # The LoRA supplies the broad character prior, while the cropped face
+        # reference remains the authority for Zoe's exact geometry.  The old
+        # 0.38 ceiling let the LoRA redesign her face and repeat training
+        # poses.  A face-only crop can safely be stronger because it contains
+        # neither clothes nor a complete body pose.
+        effective_face_scale = min(0.64, max(0.54, effective_face_scale * 0.78))
+        # A room/style reference is useful for continuity, but it must not
+        # outweigh an explicit new pose or clothing state.
+        reference_scale = min(reference_scale, 0.30)
     return (
         effective_face_scale,
         min(0.65, max(0.0, reference_scale * reference_factor)),
