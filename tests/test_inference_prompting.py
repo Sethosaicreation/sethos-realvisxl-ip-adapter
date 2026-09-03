@@ -136,6 +136,22 @@ class PromptingTests(unittest.TestCase):
         self.assertLessEqual(canary[0], 0.64)
         self.assertLessEqual(canary[1], 0.30)
 
+    def test_nude_without_style_does_not_reinject_full_source(self) -> None:
+        _, reference, _ = adapter_strengths(request(prompt_adherence="balanced"), False)
+        self.assertEqual(reference, 0.0)
+
+    def test_clothed_pose_role_is_structural_and_text_first_for_nudity(self) -> None:
+        body_request = request(
+            style_image_url="https://sethosaicreation.fr/style",
+            style_reference_role="body_pose_clothed",
+        )
+        primary, secondary = prompt_pair(body_request)
+        self.assertIn("clothed structural scaffold only", primary)
+        self.assertIn("never transfer its face, garments", secondary)
+        _, reference, guidance = adapter_strengths(body_request, True)
+        self.assertLessEqual(reference, 0.1)
+        self.assertGreaterEqual(guidance, 6.5)
+
 
 if __name__ == "__main__":
     unittest.main()

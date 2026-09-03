@@ -13,6 +13,7 @@ CONTRACT_VERSION = "sethos.realvisxl.ip-adapter.v1"
 ALLOWED_MODES = {"outfit", "background", "hair", "relight", "free"}
 ALLOWED_FIDELITY = {"identity", "balanced", "creative"}
 ALLOWED_PROMPT_ADHERENCE = {"strict", "balanced", "reference"}
+ALLOWED_STYLE_REFERENCE_ROLES = {"general", "body_pose_clothed"}
 ALLOWED_RATIOS = {"source", "1:1", "4:5", "3:4", "9:16", "16:9"}
 ALLOWED_RATINGS = {"standard", "adult"}
 ALLOWED_TEMPLATES = {
@@ -99,6 +100,7 @@ class PhotoReferenceRequest:
     character_lora_sha256: str = ""
     character_trigger: str = ""
     lora_scale: float = 0.78
+    style_reference_role: str = "general"
 
     @property
     def steps(self) -> int:
@@ -131,6 +133,7 @@ class PhotoReferenceRequest:
             "character_lora": self.character_lora,
             "character_trigger": self.character_trigger,
             "lora_scale": self.lora_scale if self.character_lora else 0.0,
+            "style_reference_role": self.style_reference_role,
         }
 
 
@@ -161,6 +164,15 @@ def parse_request(event: Any) -> PhotoReferenceRequest:
     template = _choice(data.get("prompt_template"), "prompt_template", ALLOWED_TEMPLATES, "")
     if template.startswith("adult_") and rating != "adult":
         raise InputError("Un template adulte exige la classification 18+.")
+    style_image_url = _signed_image_url(data.get("style_image"), "style_image", False)
+    style_reference_role = _choice(
+        data.get("style_reference_role"),
+        "style_reference_role",
+        ALLOWED_STYLE_REFERENCE_ROLES,
+        "general",
+    )
+    if style_reference_role == "body_pose_clothed" and not style_image_url:
+        raise InputError("Le rôle body_pose_clothed exige une seconde référence signée.")
     character_lora = str(data.get("character_lora", "") or "").strip().lower()
     character_lora_sha256 = str(data.get("character_lora_sha256", "") or "").strip().lower()
     character_trigger = str(data.get("character_trigger", "") or "").strip().lower()
@@ -184,7 +196,7 @@ def parse_request(event: Any) -> PhotoReferenceRequest:
     return PhotoReferenceRequest(
         contract_version=CONTRACT_VERSION,
         source_image_url=_signed_image_url(data.get("source_image"), "source_image", True),
-        style_image_url=_signed_image_url(data.get("style_image"), "style_image", False),
+        style_image_url=style_image_url,
         prompt=prompt,
         prompt_template=template,
         negative_prompt=negative,
@@ -201,4 +213,5 @@ def parse_request(event: Any) -> PhotoReferenceRequest:
         character_lora_sha256=character_lora_sha256,
         character_trigger=character_trigger,
         lora_scale=lora_scale,
+        style_reference_role=style_reference_role,
     )

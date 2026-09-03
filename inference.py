@@ -228,6 +228,13 @@ def prompt_pair(request: PhotoReferenceRequest) -> tuple[str, str]:
         "creative": "preserve recognizable core facial traits while allowing natural variation",
     }[request.fidelity]
     rating = "one clearly adult subject aged 18 or older" if request.content_rating == "adult" else "one adult subject"
+    reference_roles = ""
+    if request.style_image_url and request.style_reference_role == "body_pose_clothed":
+        reference_roles = (
+            " Picture 2 is a clothed structural scaffold only: follow its camera perspective, limb placement, "
+            "weight-bearing and body proportions, but never transfer its face, garments, fabric, accessories, "
+            "colours or background."
+        )
     user = _compact_instruction(request.prompt)
     character = f"photo of {request.character_trigger} woman. " if request.character_trigger else ""
     template_context = f" Supporting scene specification: {template}." if template else ""
@@ -236,12 +243,12 @@ def prompt_pair(request: PhotoReferenceRequest) -> tuple[str, str]:
         f"{mode}. {fidelity}. The requested pose, body language, clothing state, framing, action and background "
         "must be visibly present; never replace them with a generic neutral standing portrait. Realistic skin texture, "
         "anatomically correct body, natural proportions, sharp detailed face, physically plausible hands and feet, "
-        "raw personal-camera texture and coherent practical lighting."
+        f"raw personal-camera texture and coherent practical lighting.{reference_roles}"
     )
     secondary = (
         f"{character}Follow this instruction literally: {user}.{template_context} {rating}. {mode}. {fidelity}. "
         "Picture 1 controls facial identity only; it must not force the original clothes, pose, crop or background. "
-        "Prioritize the requested action and composition while keeping one coherent photorealistic person."
+        f"Prioritize the requested action and composition while keeping one coherent photorealistic person.{reference_roles}"
     )
     return primary, secondary
 
@@ -319,6 +326,19 @@ def adapter_strengths(
         # A room/style reference is useful for continuity, but it must not
         # outweigh an explicit new pose or clothing state.
         reference_scale = min(reference_scale, 0.30)
+    if requests_full_nudity(request) and not has_style_reference:
+        # A duplicated full source reference reintroduces the source outfit and
+        # selfie foreshortening. The face adapter already carries identity.
+        reference_scale = 0.0
+    elif requests_full_nudity(request) and request.style_reference_role == "body_pose_clothed":
+        # Generic IP-Adapter embeddings cannot perfectly separate pose from
+        # clothing. Keep the structural hint deliberately below the text and
+        # identity conditioning so visible garments are not copied.
+        reference_scale = {
+            "identity": 0.12,
+            "balanced": 0.16,
+            "creative": 0.22,
+        }[request.fidelity]
     return (
         effective_face_scale,
         min(0.65, max(0.0, reference_scale * reference_factor)),

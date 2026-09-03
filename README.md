@@ -6,7 +6,7 @@ Second moteur de **Administration > Outils créatifs > Créateur photo**.
 - Guidage : `h94/IP-Adapter`, variantes SDXL Plus Face et Plus
 - Contrat : `sethos.realvisxl.ip-adapter.v1`
 - Première référence : identité faciale, avec recadrage automatique du visage
-- Seconde référence facultative : corps, pose, style ou décor
+- Seconde référence facultative : corps, pose, style ou décor, avec rôle explicite `general` ou `body_pose_clothed`
 - Réglage `prompt_adherence` : `strict` (texte prioritaire), `balanced` ou `reference`
 - Sortie : WebP encodé en base64 puis copié dans le stockage privé Sethos
 - Sécurité : validation 18+, refus des termes liés aux mineurs et confirmation du consentement en amont
@@ -15,6 +15,8 @@ Second moteur de **Administration > Outils créatifs > Créateur photo**.
 Ce moteur reconstruit une nouvelle photographie guidée par les références. Il est volontairement complémentaire de Qwen Image Edit, qui reste plus adapté aux retouches locales conservant exactement la composition d’origine.
 
 Le mode `strict`, sélectionné par défaut, envoie l’instruction utilisateur aux deux encodeurs SDXL, renforce le guidage textuel et limite l’influence de la référence hors visage. Le niveau de préservation `identity` utilise parallèlement un recadrage facial serré afin de réduire la dérive des traits.
+
+Pour une demande de nudité, la photo source complète n’est plus réinjectée dans le second IP-Adapter : seul son recadrage facial sert à l’identité. Une référence `body_pose_clothed` reste un guide structurel faible afin d’éviter de recopier sa tenue ; elle doit correspondre précisément à la pose demandée.
 
 ## Endpoint RunPod
 

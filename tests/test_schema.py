@@ -120,6 +120,24 @@ class SchemaTests(unittest.TestCase):
         event["input"]["style_image"] = image_url("style")
         self.assertTrue(parse_request(event).style_image_url)
 
+    def test_body_pose_role_is_preserved(self) -> None:
+        event = valid_input()
+        event["input"]["style_image"] = image_url("style")
+        event["input"]["style_reference_role"] = "body_pose_clothed"
+        self.assertEqual(parse_request(event).style_reference_role, "body_pose_clothed")
+
+    def test_body_pose_role_requires_style_image(self) -> None:
+        event = valid_input()
+        event["input"]["style_reference_role"] = "body_pose_clothed"
+        with self.assertRaises(InputError):
+            parse_request(event)
+
+    def test_rejects_unknown_style_reference_role(self) -> None:
+        event = valid_input()
+        event["input"]["style_reference_role"] = "outfit_only"
+        with self.assertRaises(InputError):
+            parse_request(event)
+
     def test_rejects_wrong_contract(self) -> None:
         event = valid_input()
         event["input"]["contract_version"] = "wrong"
